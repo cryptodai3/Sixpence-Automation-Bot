@@ -36,7 +36,7 @@ class Sixpence:
         self.BASE_API = "https://us-central1-openoracle-de73b.cloudfunctions.net/backend_apis/api/service"
         self.BASE_HEADERS = {}
         self.WSS_HEADERS = {}
-        self.ref_code = "3SO6MZ" # U can change it with yours.
+        self.ref_code = "T4HWGQ" # U can change it with yours.
         self.proxies = []
         self.proxy_index = 0
         self.account_proxies = {}
