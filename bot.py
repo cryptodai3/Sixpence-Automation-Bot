@@ -33,10 +33,10 @@ USER_AGENT = [
 
 class Sixpence:
     def __init__(self) -> None:
-        self.BASE_API = "https://us-central1-openoracle-de73b.cloudfunctions.net/backend_apis/api/service"
+        self.BASE_API = "https://us-central1-openoracle-de73b.cloudfunctions.net/new_backend_apis/api/service"
         self.BASE_HEADERS = {}
         self.WSS_HEADERS = {}
-        self.ref_code = "T4HWGQ" # U can change it with yours.
+        self.ref_code = "3SO6MZ" # U can change it with yours.
         self.proxies = []
         self.proxy_index = 0
         self.account_proxies = {}
@@ -63,7 +63,7 @@ class Sixpence:
         print(Fore.YELLOW + Style.BRIGHT + "    🧑‍💻 Author     : YetiDAO")
         print(Fore.YELLOW + Style.BRIGHT + "    🌐 Status     : Running & Monitoring...")
         print(Fore.CYAN + Style.BRIGHT + "    ────────────────────────────────")
-        print(Fore.MAGENTA + Style.BRIGHT + "    🧬 Powered by Cryptodai3 × YetiDAO | Buddy v1.0 🚀")
+        print(Fore.MAGENTA + Style.BRIGHT + "    🧬 Powered by Cryptodai3 × YetiDAO | Buddy v1.2 🚀")
         print(Fore.LIGHTGREEN_EX + Style.BRIGHT + "═" * 60 + "\n")
 
     def format_seconds(self, seconds):
@@ -421,25 +421,19 @@ class Sixpence:
             if register:
                 self.print_message(address, proxy, Fore.GREEN, "Companion Registered Successfully")
 
-    async def process_get_earning(self, account: str, address: str, use_proxy: bool, rotate_proxy: bool):
-        while True:
-            proxy = self.get_next_proxy_for_account(address) if use_proxy else None
+    async def process_user_info(self, account: str, address: str, use_proxy: bool, rotate_proxy: bool):
+        proxy = self.get_next_proxy_for_account(address) if use_proxy else None
 
-            user = await self.user_info(account, address, use_proxy, rotate_proxy, proxy)
-            if user and user.get("msg") == "ok":
-                current_points = user["data"]["point"]["currentPoints"]
+        user = await self.user_info(account, address, use_proxy, rotate_proxy, proxy)
+        if user and user.get("msg") == "ok":
 
-                self.print_message(address, proxy, Fore.WHITE, f"Earning: {current_points} PTS")
+            invited = user.get("data", {}).get("referral", {}).get("inviteCode", None)
+            if invited is None:
+                await self.bind_invite(address, proxy)
 
-                invited = user.get("data", {}).get("referral", {}).get("inviteCode", None)
-                if invited is None:
-                    await self.bind_invite(address, proxy)
-
-                egg_info_id = user.get("data", {}).get("eggInfo", {}).get("eggInfoId", None)
-                if egg_info_id is None:
-                    await self.process_register_companion(address, use_proxy)
-
-            await asyncio.sleep(60)
+            egg_info_id = user.get("data", {}).get("eggInfo", {}).get("eggInfoId", None)
+            if egg_info_id is None:
+                await self.process_register_companion(address, use_proxy)
 
     async def connect_websocket(self, account: str, address: str, use_proxy: bool, rotate_proxy: bool):
         wss_url = "wss://ws.sixpence.ai/"
@@ -451,6 +445,18 @@ class Sixpence:
             session = ClientSession(connector=connector, timeout=ClientTimeout(total=300))
             try:
                 async with session.ws_connect(wss_url, headers=self.WSS_HEADERS[address]) as wss:
+
+                    async def send_hearbeat():
+                        while True:
+                            payload = {
+                                "type": "extension_heartbeat",
+                                "token": self.wss_tokens[address],
+                                "address": address,
+                                "taskEnable": False
+                            }
+                            await wss.send_json(payload)
+                            self.print_message(address, proxy, Fore.BLUE, "Heartbeat Sent")
+                            await asyncio.sleep(30)
                     
                     payload = {
                         "type": "extension_auth",
@@ -460,44 +466,42 @@ class Sixpence:
                     self.print_message(address, proxy, Fore.GREEN, "Websocket Is Connected")
                     connected = True
 
-                    if connected:
-                        one_days_time = 24 * 60 * 60
-                        reconnect_time = int(time.time()) + one_days_time
-
+                    while connected:
                         try:
                             response = await wss.receive_json()
-                            if response.get("msg") == "auth success":
+                            if response.get("type") == "extension_auth":
                                 self.wss_tokens[address] = response["data"]["token"]
 
                                 self.print_message(address, proxy, Fore.GREEN, "Authenticate Success")
+                                send_ping = asyncio.create_task(send_hearbeat())
 
-                                while True:
-                                    if int(time.time()) <= reconnect_time:
-                                        payload = {
-                                            "type": "extension_heartbeat",
-                                            "token": self.wss_tokens[address],
-                                            "address": address,
-                                            "taskEnable": False
-                                        }
-                                        await wss.send_json(payload)
-                                        self.print_message(address, proxy, Fore.BLUE, "Heartbeat Sent")
-                                        await asyncio.sleep(30)
+                            elif response.get("type") == "extension_user_msg":
+                                total_points = response["data"]["currentPoints"]
+                                today_points = response["data"]["currentDayPoints"]
 
-                                    else:
-                                        raise Exception("Time to Reconnect")
+                                self.print_message(address, proxy, Fore.GREEN, "Earning Refreshed "
+                                    f"{Fore.WHITE + Style.BRIGHT}Today {today_points} PTS{Style.RESET_ALL}"
+                                    f"{Fore.MAGENTA + Style.BRIGHT} - {Style.RESET_ALL}"
+                                    f"{Fore.WHITE + Style.BRIGHT}Total {total_points} PTS{Style.RESET_ALL}"
+                                )
 
                         except Exception as e:
                             self.print_message(address, proxy, Fore.YELLOW, f"Websocket Connection Closed: {Fore.RED + Style.BRIGHT}{str(e)}")
-                            await asyncio.sleep(5)
-
-                            if int(time.time()) > self.exp_time[address]:
-                                await self.process_user_login(account, address, use_proxy, rotate_proxy)
+                            if send_ping:
+                                send_ping.cancel()
+                                try:
+                                    await send_ping
+                                except asyncio.CancelledError:
+                                    self.print_message(address, proxy, Fore.YELLOW, f"Heartbeat Cancelled")
 
                             connected = False
                             await asyncio.sleep(5)
 
             except Exception as e:
                 self.print_message(address, proxy, Fore.RED, f"Websocket Not Connected: {Fore.YELLOW + Style.BRIGHT}{str(e)}")
+                if rotate_proxy:
+                    proxy = self.rotate_proxy_for_account(address) if use_proxy else None
+
                 await asyncio.sleep(5)
 
             except asyncio.CancelledError:
@@ -510,7 +514,7 @@ class Sixpence:
         logined = await self.process_user_login(account, address, use_proxy, rotate_proxy)
         if logined:
             tasks = [
-                asyncio.create_task(self.process_get_earning(account, address, use_proxy, rotate_proxy)),
+                asyncio.create_task(self.process_user_info(account, address, use_proxy, rotate_proxy)),
                 asyncio.create_task(self.connect_websocket(account, address, use_proxy, rotate_proxy))
             ]
             await asyncio.gather(*tasks)
